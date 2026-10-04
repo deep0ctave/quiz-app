@@ -20,7 +20,7 @@ services:
   backend:
     build: ./backend
     environment:
-      DB_URL: jdbc:postgresql://db:5432/${DB_NAME:-quiz}
+      DB_URL: postgresql+psycopg://db:5432/${DB_NAME:-quiz}
       DB_USERNAME: ${DB_USERNAME:-quiz}
       DB_PASSWORD: ${DB_PASSWORD:-quiz}
       # Development-only defaults; set real values in .env for any shared environment.
@@ -28,7 +28,6 @@ services:
       BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:-Admin}
       BOOTSTRAP_ADMIN_MOBILE: ${BOOTSTRAP_ADMIN_MOBILE:-9999999999}
       BOOTSTRAP_ADMIN_PIN: ${BOOTSTRAP_ADMIN_PIN:-123456}
-      AUTH_RATE_LIMIT_PER_MINUTE: ${AUTH_RATE_LIMIT_PER_MINUTE:-120}
     ports:
       - "${BACKEND_PORT:-8080}:8080"
     depends_on:

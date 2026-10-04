@@ -8,24 +8,22 @@ Schoolmela Quiz: timed multiple-choice quizzes for rural school students (ages 1
 
 Three clients of one API:
 
-- `backend/`: Spring Boot 4 (Java 21), PostgreSQL 17, Flyway, JPA
+- `backend/`: FastAPI (Python 3.12+), uv, PostgreSQL 17, SQLAlchemy, Alembic
 - `web/`: React 19 + TypeScript (Vite), served by nginx in Docker. Used by both students and admins.
 - `mobile/`: Flutter Android app, **students only** (a teacher who logs in is told to use the website)
 - `deploy/`: Helm chart (`deploy/helm/schoolmela-quiz`), Postgres backup script, k6 load test (`deploy/loadtest/quiz-day.js`)
 
 ## Commands
 
-Full stack: `docker compose up --build` (web on :3000, API on :8080, Swagger at `/swagger-ui.html`). The dev admin is mobile `9999999999`, PIN `123456`.
+Full stack: `docker compose up --build` (web on :3000, API on :8080, Swagger at `/swagger-ui.html`). The local admin is mobile `9999999999`, PIN `123456`.
 
-Backend (from `backend/`; needs Docker running because tests use Testcontainers):
+Backend (from `backend/`; needs Python 3.12+ and uv):
 
 ```sh
-docker compose up -d db                       # from repo root, DB only for local dev
-JWT_SECRET=local-dev-secret-change-me-0123456789abcdef \
-BOOTSTRAP_ADMIN_MOBILE=9999999999 BOOTSTRAP_ADMIN_PIN=123456 ./mvnw spring-boot:run
-./mvnw verify                                 # all tests (what CI runs)
-./mvnw test -Dtest=AttemptIntegrationTest     # one class
-./mvnw test -Dtest='AttemptIntegrationTest#someMethod'
+uv sync --group dev
+uv run alembic upgrade head
+uv run uvicorn app.main:app --reload --port 8080
+uv run pytest
 ```
 
 Web (from `web/`, Node 22):
@@ -40,30 +38,28 @@ npm run build        # tsc -b && vite build
 
 Mobile (from `mobile/`): `flutter analyze`, `flutter test`, `flutter run` (emulator reaches `http://10.0.2.2:3000/api`; override with `--dart-define=API_BASE_URL=...`). Release builds only allow HTTPS.
 
-CI (`.github/workflows/ci.yml`) runs backend `mvnw verify`, web `npm audit`/lint/test/build, mobile analyze/test, `helm lint` + kubeconform, and `docker compose build`. Pushing a `v*` tag publishes images to GHCR (`release.yml`).
+CI (`.github/workflows/ci.yml`) runs backend `uv sync`/pytest, web `npm audit`/lint/test/build, mobile analyze/test, `helm lint` + kubeconform, and `docker compose build`. Pushing a `v*` tag publishes images to GHCR (`release.yml`).
 
 ## Backend architecture
 
-Package-by-feature under `org.schoolmela.quiz`: `auth`, `user`, `question`, `quiz`, `group`, `assignment`, `attempt`, plus `config` and `common`. Each feature has Controller → Service → Repository, with request/response records grouped in a `*Dtos` class.
+FastAPI routes, Pydantic request models, SQLAlchemy 2 ORM models, and JWT helpers live under `backend/app/`. Alembic revisions are under `backend/migrations/versions/`. The API preserves the existing `/auth`, `/admin`, and `/me` JSON contract for the web and mobile clients.
 
-- **URL scheme drives authorization** (`config/SecurityConfig`): `/admin/**` requires ADMIN, `/me/quizzes|attempts|results/**` requires STUDENT, `/auth/*` is public. Put new endpoints under the right prefix rather than adding method-level checks. There is no `/api` prefix on the backend; nginx and the Vite dev server strip it.
-- **Auth**: stateless HS256 JWT access tokens (15 min) plus rotating refresh tokens stored in the DB (7 days). `ActiveUserJwtConverter` reloads the user on every request, so the role comes from the DB, not the token, and deactivated accounts stop working immediately. Login is mobile number + 4–6 digit PIN (bcrypt), with per-account lockout after 5 wrong PINs and a per-IP rate limit on `/auth/*` (`AuthRateLimitFilter`, `common/RateLimiter`).
-- **Errors**: throw `common/ApiException` (status, code, message). `ApiExceptionHandler` renders RFC 9457 problem details with `code`, `detail`, and optional `errors` (field → message). The `detail` text is shown directly to students and teachers, so write it in plain, simple language. Use `ApiException.invalidField(...)` for business-rule validation so it looks like bean validation.
-- **Quiz timing is server-side** (`attempt/Attempt`): starting an attempt snapshots the quiz (title, limits, questions as `AttemptQuestion`s), so later edits to the quiz don't affect attempts in progress. Each question's timer starts when it is served. `catchUp(now, grace)` lazily times out expired questions and finishes the attempt, and it is called on reads as well as writes because students may close the browser mid-quiz. `app.quiz.answer-grace` (3s) allows for slow networks.
-- **Time**: always inject `java.time.Clock` and never call `Instant.now()` directly. Tests swap in `MutableClock` (integration) or `SettableClock` (unit) to move time forward.
-- **Schema**: Flyway migrations in `src/main/resources/db/migration` (`V<n>__name.sql`), with `ddl-auto: validate`. Add a new migration and never edit an existing one.
-- Config lives under `app.*` in `application.yml`, bound to `@ConfigurationProperties` records in `config/`. `JWT_SECRET` (≥32 chars) is required. CSV exports use `app.reports.time-zone` (Asia/Kolkata).
+- **Authorization**: `/admin/**` requires ADMIN and `/me/**` quiz/result routes require STUDENT. The backend has no `/api` prefix; nginx strips it. WebSocket rooms authenticate with the short-lived access token.
+- **Auth**: HS256 access JWTs last 15 minutes; opaque refresh tokens rotate and are stored as SHA-256 hashes for 7 days. PINs are Argon2-hashed; imported Java BCrypt hashes are verified and upgraded at next login. Five failed PINs lock the account for 15 minutes.
+- **Quiz timing**: attempt questions are snapshotted at start and timed on the server. Live rooms push questions without answer keys, accept one answer per student, then advance on all answers or timeout. Room fan-out is in process memory, so keep one backend replica until a shared broker is implemented.
+- **Schema**: define tables in `backend/app/models.py`, add a new Alembic revision under `backend/migrations/versions/`, and never edit an applied revision. `0004_import_java_data.py` transfers prior Flyway data and resets refresh sessions.
+- `JWT_SECRET` must be at least 32 characters outside local development. FastAPI docs use `/swagger-ui.html` and can be disabled with `SWAGGER_ENABLED=false`.
 
 ### Backend tests
 
-Integration tests extend `IntegrationTest`, which provides one shared Spring context and one Postgres container for all test classes. Because the database is shared and never reset between tests, use `uniqueMobile()` for any new user and don't assume tables are empty. Helpers: `register`, `login`, `accessTokenFor`, `asAdmin(request, json)`, `idOf`. The clock is reset after each test. The rate limit is effectively disabled there and has its own unit tests.
+Python tests use pytest and an isolated in-memory SQLite database for API/auth/WebSocket integration tests. Run `uv run pytest` from `backend/`.
 
 ## Web architecture
 
 - `src/api/client.ts` is the only place that talks to `fetch`. It stores the session in **sessionStorage** on purpose (students share tablets, so closing the tab logs out), refreshes an expired access token once on 401 (concurrent callers share a single refresh because refresh tokens rotate), and converts problem details to `ApiError`, whose `message` can be shown as-is. `apiDownload` handles authenticated file downloads such as CSV.
 - One module per API area in `src/api/`. Pages are in `src/pages/`, and role gating uses `auth/RequireRole`.
 - Tests are vitest + Testing Library (jsdom). Shared helpers are in `src/test-utils.tsx`, and tests are colocated as `*.test.tsx`.
-- `web/nginx.conf.template` proxies `/api/*` to `API_UPSTREAM` and sets `X-Forwarded-For` (trusted only from `TRUSTED_PROXY_CIDR`). The backend uses that header for per-IP rate limiting.
+- `web/nginx.conf.template` proxies `/api/*` and forwards WebSocket upgrades to the API.
 
 ## Mobile architecture
 

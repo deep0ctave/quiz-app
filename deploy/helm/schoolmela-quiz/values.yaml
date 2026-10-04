@@ -9,12 +9,10 @@ image:
 
 backend:
   image: schoolmela-quiz-backend
-  replicas: 2
-  javaOpts: "-XX:MaxRAMPercentage=75"
+  # Room state and WebSocket fan-out are process-local; use one replica until a shared broker is added.
+  replicas: 1
   # The API docs (Swagger UI) are best kept off in production.
   swaggerEnabled: false
-  # Login/register requests per client address per minute, counted per replica.
-  authRateLimitPerMinute: 120
   resources:
     requests:
       cpu: 250m
@@ -37,7 +35,7 @@ web:
 
 # PostgreSQL is not part of this chart; a managed database (with its own backups) is recommended.
 database:
-  url: jdbc:postgresql://postgres.example.internal:5432/quiz
+  url: postgresql+psycopg://postgres.example.internal:5432/quiz
   # Used by the backup job, which connects with these settings.
   host: postgres.example.internal
   port: 5432

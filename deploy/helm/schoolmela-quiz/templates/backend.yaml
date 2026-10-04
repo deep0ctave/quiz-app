@@ -37,10 +37,6 @@ spec:
               value: {{ .Values.database.username | quote }}
             - name: SWAGGER_ENABLED
               value: {{ .Values.backend.swaggerEnabled | quote }}
-            - name: AUTH_RATE_LIMIT_PER_MINUTE
-              value: {{ .Values.backend.authRateLimitPerMinute | quote }}
-            - name: JAVA_OPTS
-              value: {{ .Values.backend.javaOpts | quote }}
           envFrom:
             - secretRef:
                 name: {{ include "quiz.secretName" . }}

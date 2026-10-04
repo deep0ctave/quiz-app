@@ -1,4 +1,5 @@
 import { useCallback } from 'react'
+import { Radio } from 'lucide-react'
 import { Link } from 'react-router'
 import { listMyQuizzes } from '../api/attempts'
 import { useAuth } from '../auth/authContext'
@@ -14,7 +15,16 @@ export function StudentHomePage() {
 
   return (
     <main>
-      <h1>Hello, {user?.name}!</h1>
+      <section className="student-home__intro">
+        <div>
+          <p className="eyebrow">YOUR LEARNING SPACE</p>
+          <h1>Hello, {user?.name}!</h1>
+          <p>Pick a quiz, settle in, and see what you know.</p>
+        </div>
+        <Link to="/student/rooms" className="button button--secondary">
+          <Radio size={17} aria-hidden="true" /> Join a live room
+        </Link>
+      </section>
 
       {error && (
         <p role="alert" className="alert">

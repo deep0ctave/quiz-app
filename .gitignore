@@ -6,6 +6,11 @@
 
 # backend
 backend/target/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
 
 # web (also covered by web/.gitignore)
 web/node_modules/

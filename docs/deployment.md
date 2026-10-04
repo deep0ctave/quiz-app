@@ -2,7 +2,7 @@
 
 The system is three parts:
 
-- **backend**: Java API, stateless; run 1 or more copies.
+- **backend**: FastAPI API, uv-managed, SQLAlchemy ORM with Alembic migrations.
 - **web**: nginx serving the website and passing `/api/` to the backend. The Android app also
   talks to `https://<your host>/api`.
 - **PostgreSQL 17**: the only place data is kept.
@@ -11,7 +11,7 @@ Two ways to run it in production:
 
 | | Single server (Docker Compose) | Kubernetes (Helm) |
 |---|---|---|
-| Good for | One school or district, simplest to run | Any cloud, several replicas |
+| Good for | One school or district, simplest to run | Any cloud |
 | Database | The `db` container on the same server | A managed PostgreSQL (recommended) |
 | Backups | The `backup` service (daily, 7 days kept) | The database provider's backups, or the chart's CronJob |
 | HTTPS | A reverse proxy you add in front (e.g. Caddy) | The ingress controller and a TLS certificate |
@@ -21,10 +21,9 @@ Two ways to run it in production:
 | Setting | Required | Purpose |
 |---|---|---|
 | `JWT_SECRET` | yes | Signs logins; at least 32 random characters (`openssl rand -base64 48`). Changing it logs everyone out. |
-| `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` | yes | PostgreSQL connection (`jdbc:postgresql://host:5432/quiz`). |
+| `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` | yes | SQLAlchemy PostgreSQL URL (`postgresql+psycopg://host:5432/quiz`) and credentials. |
 | `BOOTSTRAP_ADMIN_MOBILE`, `BOOTSTRAP_ADMIN_PIN`, `BOOTSTRAP_ADMIN_NAME` | first start | Creates the first admin if that mobile number is not registered yet. Change the PIN from the default. |
-| `SWAGGER_ENABLED` | no | API documentation at `/swagger-ui.html`. Turn **off** in production (`false`). |
-| `AUTH_RATE_LIMIT_PER_MINUTE` | no (120) | Login/register attempts per network address per minute. A class often shares one school address, so do not set it too low. |
+| `SWAGGER_ENABLED` | no | API documentation at `/swagger-ui.html`. Set to `false` in production. |
 | `TRUSTED_PROXY_CIDR` (web) | behind a proxy | Address range of the load balancer/ingress in front of nginx, whose `X-Forwarded-For` gives the real client address. Default trusts none. |
 | `app.reports.time-zone` | no (Asia/Kolkata) | Time zone of dates in CSV exports. |
 
@@ -32,8 +31,8 @@ Two ways to run it in production:
 
 1. Install Docker on a Linux server (2 CPUs and 2 GB of memory are plenty for 100 students at once).
 2. Copy the repository, then create `.env` from `.env.example` and set **at least**
-   `JWT_SECRET`, `DB_PASSWORD`, `BOOTSTRAP_ADMIN_MOBILE`, `BOOTSTRAP_ADMIN_PIN`, and
-   `SWAGGER_ENABLED=false`.
+  `JWT_SECRET`, `DB_PASSWORD`, `BOOTSTRAP_ADMIN_MOBILE`, `BOOTSTRAP_ADMIN_PIN`, and
+  `SWAGGER_ENABLED=false`.
 3. In `docker-compose.yml`, remove the published ports of `db` (5432) and `backend` (8080). Only
    `web` needs to be reachable.
 4. `docker compose up -d --build`
@@ -84,7 +83,7 @@ kubectl create secret generic quiz-secrets \
 helm install quiz deploy/helm/schoolmela-quiz \
   --set image.tag=1.0.0 \
   --set secrets.existingSecret=quiz-secrets \
-  --set database.url=jdbc:postgresql://<db host>:5432/quiz \
+  --set database.url=postgresql+psycopg://<db host>:5432/quiz \
   --set database.host=<db host> \
   --set ingress.host=quiz.example.org \
   --set web.trustedProxyCidr=<pod/LB address range>
@@ -92,7 +91,7 @@ helm install quiz deploy/helm/schoolmela-quiz \
 
 What the chart sets up:
 
-- Two backend and two web pods, with health checks and a disruption budget.
+- One backend pod and two web pods, with health checks.
 - An Ingress with TLS.
 - Locked-down containers: non-root, read-only filesystem, no Linux capabilities.
 
@@ -102,10 +101,12 @@ See `values.yaml` for everything else.
 
 Notes:
 
-- **Database changes** run automatically when the backend starts (Flyway). Several pods starting
-  together is safe.
-- **Rate limits** are counted per backend pod. With 2 pods the effective limit per address is
-  about twice `authRateLimitPerMinute`.
+- **Database changes** run automatically when the backend starts (Alembic). The first Python
+  migration copies existing Flyway data into `py_*` tables and does not copy refresh sessions.
+- **Live-room state is kept in backend process memory.** Keep `backend.replicas=1`; add a shared
+  broker such as Redis before scaling the backend horizontally.
+- Five incorrect PINs lock that account for 15 minutes. There is not yet a distributed per-IP
+  rate limiter.
 
 ## Health checks and monitoring
 
@@ -131,14 +132,15 @@ the same moment, answer 5 questions with 2–6 seconds' thinking time each, then
 results. Run it against a throwaway stack, because it creates students and a quiz:
 
 ```sh
-WEB_PORT=3100 BACKEND_PORT=8180 DB_PORT=5433 AUTH_RATE_LIMIT_PER_MINUTE=1000000 \
+WEB_PORT=3100 BACKEND_PORT=8180 DB_PORT=5433 \
   docker compose -p quiz-loadtest up -d --build --wait
 docker run --rm -i -e BASE_URL=http://host.docker.internal:3100/api -e STUDENTS=100 \
   grafana/k6 run - < deploy/loadtest/quiz-day.js
 docker compose -p quiz-loadtest down -v
 ```
 
-Results with **100 students at once** (October 2026; the Docker Compose stack on a development PC):
+Historical results with **100 students at once** (October 2026; measured before the FastAPI
+rewrite, so rerun this test before using it as a Python-backend performance claim):
 
 | Measure (95th percentile) | Freshly started | Warmed up | Target |
 |---|---|---|---|
@@ -147,5 +149,5 @@ Results with **100 students at once** (October 2026; the Docker Compose stack on
 | Logging in (all 100 in the same second) | 741 ms | 649 ms | < 2 s |
 | Failed requests | 0 of 1008 | 0 of 1008 | < 1% |
 
-The backend used about 475 MB of memory. Logins are the slowest step because each PIN check is
-deliberately slow (BCrypt), which protects PINs if the database is ever stolen.
+The Java-era backend used about 475 MB of memory. Its measurements and BCrypt login timings do
+not describe the FastAPI implementation; repeat the load test before sizing a production rollout.

@@ -15,6 +15,7 @@ import { QuizAssignPage } from './pages/QuizAssignPage'
 import { QuizFormPage } from './pages/QuizFormPage'
 import { QuizzesPage } from './pages/QuizzesPage'
 import { RegisterPage } from './pages/RegisterPage'
+import { RoomPage } from './pages/RoomPage'
 import { ResultReviewPage } from './pages/ResultReviewPage'
 import { ResultsPage } from './pages/ResultsPage'
 import { StudentHomePage } from './pages/StudentHomePage'
@@ -47,11 +48,14 @@ function App() {
   const home = user ? homePathFor(user.role) : '/login'
 
   return (
-    <>
-      <Header />
+    <div className={`app-shell${user ? '' : ' app-shell--public'}`}>
+      {user && <Header />}
+      <div className="app-content">
       <Routes>
         <Route path="/login" element={user ? <Navigate to={home} replace /> : <LoginPage />} />
         <Route path="/register" element={user ? <Navigate to={home} replace /> : <RegisterPage />} />
+        <Route path="/admin/rooms" element={<RequireRole role="ADMIN"><RoomPage mode="host" /></RequireRole>} />
+        <Route path="/student/rooms" element={<RequireRole role="STUDENT"><RoomPage mode="student" /></RequireRole>} />
         {STUDENT_ROUTES.map(([path, Page]) => (
           <Route
             key={path}
@@ -76,7 +80,8 @@ function App() {
         ))}
         <Route path="*" element={<Navigate to={home} replace />} />
       </Routes>
-    </>
+      </div>
+    </div>
   )
 }
 

@@ -12,10 +12,11 @@ The application will:
 * Enable admins to manage users, create quizzes, assign quizzes, and review results.  
 * Be available as a web-based platform and an Android mobile application, optimized for simplicity and accessibility on basic devices with limited internet connectivity.  
 * Ensure data security for user credentials and quiz results.
+* Support teacher-hosted live quiz rooms with WebSocket question delivery and student answers.
 
 ## **2.1 Technology Stack & Architecture**
 
-* **Backend**: Java.  
+* **Backend**: Python, FastAPI, SQLAlchemy, Alembic, managed with uv.
 * **Web Frontend**: React.  
 * **Mobile Frontend**: Flutter  
 * **Architecture**: Cloud Native architecture, designed for containerized deployment across any cloud provider.  

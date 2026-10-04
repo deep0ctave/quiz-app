@@ -4,6 +4,7 @@ import { ApiError } from '../api/client'
 import { homePathFor, useAuth } from '../auth/authContext'
 import { digitsOnly } from '../components/digitsOnly'
 import { Field } from '../components/Field'
+import { AuthLayout } from '../components/AuthLayout'
 
 export function LoginPage() {
   const { login } = useAuth()
@@ -37,8 +38,12 @@ export function LoginPage() {
   }
 
   return (
-    <main className="card">
-      <h1>Log in</h1>
+    <AuthLayout
+      eyebrow="WELCOME BACK"
+      title="Log in"
+      description="Pick up where your curiosity left off."
+      footer={<>New to Schoolmela? <Link to="/register">Create an account</Link></>}
+    >
       <form onSubmit={handleSubmit} noValidate>
         <Field
           label="Mobile number"
@@ -71,9 +76,6 @@ export function LoginPage() {
           {busy ? 'Please wait…' : 'Log in'}
         </button>
       </form>
-      <p className="card__footer">
-        New here? <Link to="/register">Create an account</Link>
-      </p>
-    </main>
+    </AuthLayout>
   )
 }

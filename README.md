@@ -7,7 +7,7 @@ Requirements: [Schoolmela Quiz App Requirements.md](Schoolmela%20Quiz%20App%20Re
 
 | Path       | What                                                        |
 |------------|-------------------------------------------------------------|
-| `backend/` | Spring Boot 4 API (Java 21), PostgreSQL, Flyway migrations   |
+| `backend/` | FastAPI (Python 3.12+), uv, SQLAlchemy, Alembic, PostgreSQL |
 | `web/`     | React + TypeScript web app (Vite), served by nginx in Docker |
 | `mobile/`  | Flutter Android app for students — see [mobile/README.md](mobile/README.md) |
 | `deploy/`  | Helm chart, backup script and load test                       |
@@ -30,12 +30,16 @@ docker compose up --build
 | URL                                        | Service                         |
 |--------------------------------------------|---------------------------------|
 | http://localhost:3000                      | Web app                         |
-| http://localhost:8080/swagger-ui.html      | API docs                        |
+| http://localhost:8080/swagger-ui.html      | API docs (Swagger UI)           |
 | http://localhost:8080/actuator/health      | Backend health                  |
 | localhost:5432 (user/password/db `quiz`)   | PostgreSQL                      |
 
 The web app reaches the API through `/api/*`, which nginx proxies to the backend.
-Ports and credentials can be overridden by copying `.env.example` to `.env`.
+Ports and credentials can be overridden by copying `.env.example` to `.env`. Alembic applies the
+schema on backend startup. When starting from a database created by the previous Java version, the
+migration copies users, quizzes, questions, groups, assignments, and attempts into the Python tables;
+refresh sessions are intentionally reset. Existing BCrypt PINs are upgraded to Argon2 after a
+successful login.
 
 ### Logging in
 
@@ -65,23 +69,19 @@ Start only the database:
 docker compose up -d db
 ```
 
-**Backend** (needs JDK 21):
+**Backend** (needs Python 3.12+ and uv):
 
-```sh
+```powershell
 cd backend
-JWT_SECRET=local-dev-secret-change-me-0123456789abcdef \
-BOOTSTRAP_ADMIN_MOBILE=9999999999 BOOTSTRAP_ADMIN_PIN=123456 \
-./mvnw spring-boot:run     # http://localhost:8080
-./mvnw verify              # tests; needs Docker running (Testcontainers)
-```
-
-If you only have an older JDK, run the tests in a container instead:
-
-```sh
-docker run --rm -v "$PWD/backend:/app" -v quiz-m2:/root/.m2 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal \
-  -w /app maven:3.9-eclipse-temurin-21 mvn -B verify
+uv sync --group dev
+$env:DB_URL = "postgresql+psycopg://localhost:5432/quiz"
+$env:DB_USERNAME = "quiz"
+$env:DB_PASSWORD = "quiz"
+$env:JWT_SECRET = "local-dev-secret-change-me-0123456789abcdef"
+uv run alembic upgrade head
+uv run uvicorn app.main:app --reload --port 8080
+# In another terminal, from backend:
+uv run pytest
 ```
 
 **Web** (needs Node 22):
